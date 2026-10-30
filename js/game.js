@@ -37,6 +37,7 @@
   const STAMINA_SPRINT_MIN = 20;
   const BASE_PERCEPTION = 5;
   const PROFILE_KEY = 'azure-profile-v1';
+  const PROFILE_VERSION = 2;
   const UPGRADE_CAPS = {
     speed: 10,
     sprint: 10,
@@ -256,13 +257,14 @@
 
     defaultProfile() {
       return {
+        version: PROFILE_VERSION,
         upgrades: { speed: 0, sprint: 0, light: 0, stamina: 0, drain: 0, perception: 0, alertness: 0 },
         items: { stamina: 0, speed: 0, firework: 0, whale: 0, slow: 0, trap: 0 },
         hotbar: DEFAULT_HOTBAR.slice(),
         compass: false,
         xray: false,
         mode: 'explore',
-        boss: { sensitivity: 0, speed: 0, inertia: 0.6 }
+        boss: { sensitivity: 0, speed: 0, inertia: 0 }
       };
     }
 
@@ -292,14 +294,16 @@
         base.compass = !!(saved && saved.compass);
         base.xray = !!(saved && saved.xray);
         base.mode = saved && ['explore', 'chase', 'test'].includes(saved.mode) ? saved.mode : 'explore';
-        if (saved && saved.boss) {
+        // Older profiles stored derived/old default boss values. The current
+        // schema starts every boss stat at zero; don't migrate those values.
+        if (saved && saved.version === PROFILE_VERSION && saved.boss) {
           const sens = Number(saved.boss.sensitivity);
           const spd = Number(saved.boss.speed);
           const inertia = Number(saved.boss.inertia);
           if (Number.isFinite(sens)) base.boss.sensitivity = clamp(Math.floor(sens), 0, 40);
           if (Number.isFinite(spd)) base.boss.speed = clamp(Math.floor(spd), 0, 50);
           if (Number.isFinite(inertia)) {
-            base.boss.inertia = clamp(Math.round(inertia * 10) / 10, 0.1, 2);
+            base.boss.inertia = clamp(Math.round(inertia * 10) / 10, 0, 2);
           }
         }
       } catch (err) { /* file:// / privacy mode */ }
@@ -308,6 +312,7 @@
 
     saveProfile() {
       try {
+        this.profile.version = PROFILE_VERSION;
         localStorage.setItem(PROFILE_KEY, JSON.stringify(this.profile));
       } catch (err) { /* ignore */ }
     }
@@ -509,9 +514,9 @@
 
       this.dom.bossSettings.innerHTML = `
         <div class="upgrade-row">
-          <div class="upgrade-copy"><b>BOSS 灵敏度</b><small>感知距离 = 10 + 灵敏度；开局会避开这个范围</small></div>
+          <div class="upgrade-copy"><b>BOSS 灵敏度</b><small>感知距离 = 10 + 灵敏度；进入范围则会被感知到</small></div>
           <div class="upgrade-readout">
-            <b data-boss-value="sensitivity">10 格</b>
+            <b data-boss-value="sensitivity">0</b>
             <span data-boss-points="sensitivity">0 / 40</span>
           </div>
           <div class="stepper">
@@ -522,7 +527,7 @@
         <div class="upgrade-row">
           <div class="upgrade-copy"><b>BOSS 速度</b><small>漫游 75 + 速度；追逐 95 + 1.25 × 速度</small></div>
           <div class="upgrade-readout">
-            <b data-boss-value="speed">75</b>
+            <b data-boss-value="speed">0</b>
             <span data-boss-points="speed">0 / 50</span>
           </div>
           <div class="stepper">
@@ -531,10 +536,10 @@
           </div>
         </div>
         <div class="upgrade-row">
-          <div class="upgrade-copy"><b>BOSS 惯性</b><small>每个方向持续 0.1–2.0 秒后再决定是否转向</small></div>
+          <div class="upgrade-copy"><b>BOSS 惯性</b><small>决定了你是否能很好溜BOSS</small></div>
           <div class="upgrade-readout">
-            <b data-boss-value="inertia">0.6s</b>
-            <span data-boss-points="inertia">0.6 / 2.0</span>
+            <b data-boss-value="inertia">0.0s</b>
+            <span data-boss-points="inertia">0.0 / 2.0</span>
           </div>
           <div class="stepper">
             <button type="button" data-boss-setting="inertia" data-delta="-0.1" aria-label="降低BOSS惯性">−</button>
@@ -604,9 +609,8 @@
       }
       const bossValues = this.dom.bossSettings.querySelectorAll('[data-boss-value]');
       for (const el of bossValues) {
-        if (el.dataset.bossValue === 'sensitivity') el.textContent = `${10 + this.profile.boss.sensitivity} 格`;
-        else if (el.dataset.bossValue === 'speed') el.textContent = String(75 + this.profile.boss.speed);
-        else el.textContent = this.profile.boss.inertia.toFixed(1) + 's';
+        if (el.dataset.bossValue === 'inertia') el.textContent = this.profile.boss.inertia.toFixed(1) + 's';
+        else el.textContent = String(this.profile.boss[el.dataset.bossValue]);
       }
       for (const key of ['sensitivity', 'speed', 'inertia']) {
         const pts = this.dom.bossSettings.querySelector(`[data-boss-points="${key}"]`);
@@ -619,7 +623,7 @@
         const negative = key === 'inertia' ? '-0.1' : '-1';
         const minus = this.dom.bossSettings.querySelector(`[data-boss-setting="${key}"][data-delta="${negative}"]`);
         const plus = this.dom.bossSettings.querySelector(`[data-boss-setting="${key}"][data-delta="${step}"]`);
-        if (minus) minus.disabled = this.profile.boss[key] <= (key === 'inertia' ? 0.1 : 0);
+        if (minus) minus.disabled = this.profile.boss[key] <= 0;
         if (plus) plus.disabled = this.profile.boss[key] >= (key === 'inertia' ? 2 : (key === 'sensitivity' ? 40 : 50));
       }
 
@@ -679,7 +683,7 @@
         const step = delta > 0 ? 0.1 : -0.1;
         this.profile.boss.inertia = clamp(
           Math.round((this.profile.boss.inertia + step) * 10) / 10,
-          0.1,
+          0,
           2
         );
       } else {
@@ -1605,7 +1609,9 @@
         roamTurnTimer: 0,
         dirX: 0,
         dirZ: 0,
-        inertia: clamp(Number(this.profile.boss.inertia) || 0.6, 0.1, 2),
+        inertia: Number.isFinite(Number(this.profile.boss.inertia))
+          ? clamp(Number(this.profile.boss.inertia), 0, 2)
+          : 0,
         alerted: false,
         alertTimer: 0,
         boundTimer: 0,
