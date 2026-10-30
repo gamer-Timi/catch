@@ -65,6 +65,25 @@
   };
   const HOTBAR_SIZE = 9;
   const DEFAULT_HOTBAR = ['stamina', 'speed', null, null, null, null, null, null, null];
+  const CHARACTERS = ['lamp', 'grok'];
+  const CHARACTER_INFO = {
+    lamp: {
+      name: '提灯者',
+      desc: '在灯火中寻找月之门的旅人。',
+      portrait: 'assets/player-portrait.png',
+      skill: ''
+    },
+    grok: {
+      name: '格挡者',
+      desc: '来自另一条时间线的守门人，擅长以架势化解追猎。',
+      portrait: 'assets/grok-portrait.png',
+      skill: '<b>格挡 · Q</b><br>100 秒储存一层，最多两层。按 Q 进入 1 秒格挡，期间无法移动。<br><br>格挡期间被追上：把 BOSS 击退 100m 并眩晕 0.5 秒；撞墙则眩晕 2.5 秒并震碎墙面。<br><br>按下 Q 后 0.1 秒内被追上：触发防反，短暂特写并击退 200m，眩晕 7.5 秒，同时使本次充能时间减少 20%。'
+    }
+  };
+  const BLOCK_RECHARGE_SECONDS = 100;
+  const BLOCK_MAX_CHARGES = 2;
+  const BLOCK_DURATION = 1;
+  const PARRY_WINDOW = 0.1;
   const TAU = Math.PI * 2;
 
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
@@ -146,6 +165,17 @@
       this.bossPerception = 10;
       this.slowFields = [];
       this.traps = [];
+      this.wallBreaks = [];
+      this.blockCharges = BLOCK_MAX_CHARGES;
+      this.blockRecharge = 0;
+      this.blocking = false;
+      this.blockElapsed = 0;
+      this.blockTriggered = false;
+      this.skillAnimTimer = 0;
+      this.skillAnimTotal = 0;
+      this.parryFreeze = 0;
+      this.parryPending = null;
+      this.parryFlash = 0;
       this.backpackOpen = false;
       this.applyProfile();
       this.stamina = this.staminaMax;
@@ -163,6 +193,18 @@
         staminaState: document.getElementById('stamina-state'),
         compassReadout: document.getElementById('compass-readout'),
         buffRow: document.getElementById('buff-row'),
+        skillHud: document.getElementById('skill-hud'),
+        skillState: document.getElementById('skill-state'),
+        skillCharges: document.getElementById('skill-charges'),
+        characterCard: document.getElementById('character-card'),
+        characterPreviewWrap: document.getElementById('character-preview-wrap'),
+        characterPreview: document.getElementById('character-preview'),
+        characterName: document.getElementById('character-name'),
+        characterDesc: document.getElementById('character-desc'),
+        characterPrev: document.getElementById('character-prev'),
+        characterNext: document.getElementById('character-next'),
+        characterSkillToggle: document.getElementById('character-skill-toggle'),
+        characterSkillInfo: document.getElementById('character-skill-info'),
         hotbar: document.getElementById('hotbar'),
         testView: document.getElementById('test-view'),
         viewPlayer: document.getElementById('view-player'),
@@ -228,6 +270,7 @@
       this.loadDashSprite();
       this.loadDirectionSprites();
       this.loadDirectionSheets();
+      this.loadGrokSprites();
       this.loadBossSprites();
       this.buildHomeUI();
       this.buildHotbar();
@@ -263,6 +306,7 @@
         hotbar: DEFAULT_HOTBAR.slice(),
         compass: false,
         xray: false,
+        character: 'lamp',
         mode: 'explore',
         boss: { sensitivity: 0, speed: 0, inertia: 0 }
       };
@@ -293,6 +337,7 @@
         }
         base.compass = !!(saved && saved.compass);
         base.xray = !!(saved && saved.xray);
+        base.character = saved && CHARACTERS.includes(saved.character) ? saved.character : 'lamp';
         base.mode = saved && ['explore', 'chase', 'test'].includes(saved.mode) ? saved.mode : 'explore';
         // Older profiles stored derived/old default boss values. The current
         // schema starts every boss stat at zero; don't migrate those values.
@@ -440,8 +485,34 @@
       }
     }
 
-    loadBossSprites() {
+    loadGrokSprites() {
       const files = {
+        front: 'grok-down-walk.png',
+        back: 'grok-up-walk.png',
+        side: 'grok-side-walk.png',
+        diagFront: 'grok-diag-front-walk.png',
+        diagBack: 'grok-diag-back-walk.png'
+      };
+      for (const [key, file] of Object.entries(files)) {
+        const img = new Image();
+        img.decoding = 'async';
+        img.onload = () => {
+          if (!img.naturalWidth) return;
+          this.renderer.setGrokSheet(key, img, Math.max(1, Math.round(img.naturalWidth / 512)));
+        };
+        img.onerror = () => {};
+        img.src = 'assets/' + file + '?v=1';
+      }
+      const skill = new Image();
+      skill.decoding = 'async';
+      skill.onload = () => {
+        if (skill.naturalWidth) this.renderer.setSkillSheet(skill, Math.max(1, Math.round(skill.naturalWidth / 512)));
+      };
+      skill.onerror = () => {};
+      skill.src = 'assets/grok-skill.png?v=1';
+    }
+
+    loadBossSprites() {      const files = {
         up: 'boss-up.png',
         down: 'boss-down.png',
         left: 'boss-left.png',
@@ -631,6 +702,7 @@
       if (this.dom.mapPerception) this.dom.mapPerception.textContent = `${this.perception} 格`;
       this.updateCompassHUD();
       this.updateBuffHUD();
+      this.updateCharacterUI(false);
       this.buildBackpackUI();
     }
 
@@ -792,6 +864,221 @@
       this.setHotbarSlot(empty, key);
     }
 
+    updateCharacterUI(collapseSkill = true) {
+      if (!this.dom.characterPreview) return;
+      const info = CHARACTER_INFO[this.profile.character] || CHARACTER_INFO.lamp;
+      this.dom.characterPreview.src = info.portrait + '?v=1';
+      this.dom.characterName.textContent = info.name;
+      this.dom.characterDesc.textContent = info.desc;
+      this.dom.characterSkillInfo.innerHTML = info.skill || '<b>暂无主动技能</b><br>这个角色没有格挡能力。';
+      if (collapseSkill) {
+        this.dom.characterSkillInfo.hidden = true;
+        this.dom.characterSkillToggle.setAttribute('aria-expanded', 'false');
+      }
+    }
+
+    cycleCharacter(direction) {
+      const idx = CHARACTERS.indexOf(this.profile.character);
+      const next = CHARACTERS[(idx + (direction < 0 ? -1 : 1) + CHARACTERS.length) % CHARACTERS.length];
+      this.profile.character = next;
+      this.saveProfile();
+      const wrap = this.dom.characterPreviewWrap;
+      wrap.classList.remove('box-swap');
+      void wrap.offsetWidth;
+      wrap.classList.add('box-swap');
+      setTimeout(() => this.updateCharacterUI(true), 190);
+      setTimeout(() => wrap.classList.remove('box-swap'), 500);
+    }
+
+    toggleCharacterSkillInfo() {
+      const info = this.dom.characterSkillInfo;
+      const open = info.hidden;
+      info.hidden = !open;
+      this.dom.characterSkillToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    useBlockSkill() {
+      if (this.profile.character !== 'grok' || this.state !== 'playing') return;
+      if (this.blocking || this.blockCharges <= 0) return;
+      const wasFull = this.blockCharges >= BLOCK_MAX_CHARGES;
+      this.blockCharges--;
+      if (wasFull || this.blockRecharge <= 0) this.blockRecharge = BLOCK_RECHARGE_SECONDS;
+      this.blocking = true;
+      this.blockElapsed = 0;
+      this.blockTriggered = false;
+      this.skillAnimTimer = 0;
+      this.skillAnimTotal = 0;
+      this.player.moving = false;
+      this.updateSkillHUD();
+      this.showToast('格挡架势 · 1 秒内无法移动', 'info', 1600);
+    }
+
+    updateSkillState(dt) {
+      if (this.blockCharges < BLOCK_MAX_CHARGES && this.blockRecharge > 0) {
+        this.blockRecharge = Math.max(0, this.blockRecharge - dt);
+        while (this.blockRecharge <= 0 && this.blockCharges < BLOCK_MAX_CHARGES) {
+          this.blockCharges++;
+          this.blockRecharge = this.blockCharges < BLOCK_MAX_CHARGES ? BLOCK_RECHARGE_SECONDS : 0;
+        }
+      } else if (this.blockCharges >= BLOCK_MAX_CHARGES) {
+        this.blockRecharge = 0;
+      }
+      if (this.blocking) {
+        this.blockElapsed += dt;
+        if (this.blockElapsed >= BLOCK_DURATION) this.blocking = false;
+      }
+      if (this.skillAnimTimer > 0) {
+        this.skillAnimTimer = Math.max(0, this.skillAnimTimer - dt);
+      }
+      this.updateSkillHUD();
+    }
+
+    updateSkillHUD() {
+      if (!this.dom.skillHud) return;
+      const visible = this.profile.character === 'grok' &&
+        (this.state === 'playing' || this.state === 'paused' || this.state === 'whale');
+      this.dom.skillHud.hidden = !visible;
+      if (!visible) return;
+      while (this.dom.skillCharges.children.length < BLOCK_MAX_CHARGES) {
+        this.dom.skillCharges.appendChild(document.createElement('i'));
+      }
+      const pips = this.dom.skillCharges.children;
+      for (let i = 0; i < pips.length; i++) {
+        pips[i].classList.toggle('full', i < this.blockCharges);
+      }
+      this.dom.skillHud.classList.toggle('blocking', this.blocking);
+      this.dom.skillHud.classList.toggle('parry', this.parryFreeze > 0);
+      if (this.parryFreeze > 0) {
+        this.dom.skillState.textContent = '防反！';
+      } else if (this.blocking) {
+        this.dom.skillState.textContent = '格挡中';
+      } else if (this.blockCharges > 0) {
+        this.dom.skillState.textContent = '就绪 · Q';
+      } else {
+        this.dom.skillState.textContent = `充能 ${Math.ceil(this.blockRecharge)}s`;
+      }
+    }
+
+    startParry() {
+      this.parryFreeze = 0.55;
+      this.parryFlash = 1;
+      this.parryPending = { special: true };
+      this.renderer.cinematicZoom = 1.75;
+      this.skillAnimTimer = 0;
+      this.skillAnimTotal = 0;
+      this.updateSkillHUD();
+    }
+
+    finishParry() {
+      this.parryFreeze = 0;
+      this.parryFlash = 0;
+      this.renderer.cinematicZoom = 1;
+      const pending = this.parryPending;
+      this.parryPending = null;
+      if (pending) {
+        this.applyBlockKnockback(true);
+        this.blockRecharge = Math.max(0, this.blockRecharge * 0.8);
+      }
+    }
+
+    applyBlockKnockback(special) {
+      const b = this.boss;
+      if (!b) return;
+      let dx = b.x - this.player.x;
+      let dz = b.z - this.player.z;
+      let len = Math.hypot(dx, dz);
+      if (len < 0.001) {
+        dx = -(b.chaseDirX || this.player.facingX || 1);
+        dz = -(b.chaseDirZ || 0);
+        len = Math.hypot(dx, dz) || 1;
+      }
+      const ux = dx / len;
+      const uz = dz / len;
+      const distance = (special ? 200 : 100) * 0.06;
+      const stepSize = 0.15;
+      let traveled = 0;
+      let wallHit = false;
+      let wallTile = null;
+      while (traveled < distance) {
+        const nx = b.x + ux * stepSize;
+        const nz = b.z + uz * stepSize;
+        if (this.collides(nx, nz)) {
+          wallHit = true;
+          // Find the wall immediately in front of the knockback, not any
+          // wall tile behind or beside the boss.
+          const probes = [0.35, 0.65, 0.95, 1.25, 1.6];
+          for (const probe of probes) {
+            const wtx = Math.floor((b.x + ux * probe) / this.maze.tileSize);
+            const wty = Math.floor((b.z + uz * probe) / this.maze.tileSize);
+            if (this.maze.isWallTile(wtx, wty)) {
+              wallTile = { tx: wtx, ty: wty };
+              break;
+            }
+          }
+          if (!wallTile) {
+            const wtx = Math.floor(nx / this.maze.tileSize);
+            const wty = Math.floor(nz / this.maze.tileSize);
+            let bestDot = -2;
+            for (let oy = -1; oy <= 1; oy++) {
+              for (let ox = -1; ox <= 1; ox++) {
+                if (!this.maze.isWallTile(wtx + ox, wty + oy)) continue;
+                const center = this.maze.tileCenter(wtx + ox, wty + oy);
+                const dot = ((center.x - b.x) * ux + (center.z - b.z) * uz) /
+                  Math.max(0.001, Math.hypot(center.x - b.x, center.z - b.z));
+                if (dot > bestDot) {
+                  bestDot = dot;
+                  wallTile = { tx: wtx + ox, ty: wty + oy };
+                }
+              }
+            }
+          }
+          break;
+        }
+        b.x = nx;
+        b.z = nz;
+        traveled += stepSize;
+      }
+      b.tx = Math.max(0, Math.min(this.maze.width - 1, Math.floor(b.x / this.maze.tileSize)));
+      b.ty = Math.max(0, Math.min(this.maze.height - 1, Math.floor(b.z / this.maze.tileSize)));
+      b.state = 'chase';
+      b.alerted = true;
+      b.chasePath = null;
+      b.chaseTurnTimer = 0;
+      b.chaseDirX = 0;
+      b.chaseDirZ = 0;
+      b.hasTarget = false;
+      b.trapPullTimer = 0;
+      b.boundTimer = 0;
+      b.stunTimer = special ? 7.5 : (wallHit ? 2.5 : 0.5);
+      b.moving = false;
+      this.skillAnimTimer = 0.65;
+      this.skillAnimTotal = 0.65;
+      if (wallHit && wallTile) this.addWallBreak(wallTile.tx, wallTile.ty);
+      this.setBossFacing(this.player.x - b.x, this.player.z - b.z);
+      this.pushBossTrail(true);
+      this.updateBossHud();
+      const msg = special
+        ? '完美防反 · BOSS 被击退 200m，眩晕 7.5 秒'
+        : (wallHit ? '格挡成功 · BOSS 撞墙，眩晕 2.5 秒' : '格挡成功 · BOSS 眩晕 0.5 秒');
+      this.showToast(msg, 'moon', 3200);
+      this.audio.dash();
+    }
+
+    addWallBreak(tx, ty) {
+      const existing = this.wallBreaks.find((w) => w.tx === tx && w.ty === ty);
+      if (existing) {
+        existing.age = 0;
+        return;
+      }
+      this.wallBreaks.push({ tx, ty, age: 0 });
+    }
+
+    updateWallBreaks(dt) {
+      if (!this.wallBreaks.length) return;
+      for (const w of this.wallBreaks) w.age += dt;
+      this.wallBreaks = this.wallBreaks.filter((w) => w.age < 10.5);
+    }
+
     useSlot(index) {
       if (this.state !== 'playing') return;
       const itemKey = this.profile.hotbar[index];
@@ -946,6 +1233,9 @@
       this.dom.homeCloseBottom.addEventListener('click', () => this.closeHome());
       this.dom.openBackpack.addEventListener('click', () => this.openBackpack());
       this.dom.backpackClose.addEventListener('click', () => this.closeBackpack());
+      this.dom.characterPrev.addEventListener('click', () => this.cycleCharacter(-1));
+      this.dom.characterNext.addEventListener('click', () => this.cycleCharacter(1));
+      this.dom.characterSkillToggle.addEventListener('click', () => this.toggleCharacterSkillInfo());
       this.dom.whaleUse.addEventListener('click', () => this.useWhaleCard());
       this.dom.whaleDecline.addEventListener('click', () => this.declineWhaleCard());
       this.dom.backpackPanel.addEventListener('click', (e) => {
@@ -1157,7 +1447,7 @@
         }
         return;
       }
-      const gameKeys = ['Space', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyM', 'KeyV', 'Escape', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9', 'Numpad1', 'Numpad2', 'Numpad3', 'Numpad4', 'Numpad5', 'Numpad6', 'Numpad7', 'Numpad8', 'Numpad9'];
+      const gameKeys = ['Space', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyM', 'KeyV', 'Escape', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9', 'Numpad1', 'Numpad2', 'Numpad3', 'Numpad4', 'Numpad5', 'Numpad6', 'Numpad7', 'Numpad8', 'Numpad9'];
       if (gameKeys.includes(code)) e.preventDefault();
 
       if (code === 'Space') {
@@ -1195,6 +1485,12 @@
       }
       if (code === 'KeyV') {
         if (this.state === 'playing' && this.mode === 'test') this.toggleCameraFocus();
+        return;
+      }
+      if (code === 'KeyQ') {
+        if (this.state === 'playing' && this.profile.character === 'grok') {
+          if (!e.repeat) this.useBlockSkill();
+        }
         return;
       }
 
@@ -1310,6 +1606,7 @@
       this.dom.defeatScreen.setAttribute('aria-hidden', 'true');
       this.dom.bossAlert.hidden = true;
       this.dom.bossArrow.hidden = true;
+      this.dom.skillHud.hidden = true;
       if (this.boss) this.boss.active = false;
       this.dom.whalePrompt.classList.remove('open');
       this.dom.whalePrompt.setAttribute('aria-hidden', 'true');
@@ -1319,6 +1616,7 @@
       this.dom.testView.hidden = true;
       this.cameraFocus = 'player';
       this.renderer.focusBoss = false;
+      this.renderer.cinematicZoom = 1;
       this.dom.hud.classList.remove('visible');
       this.dom.startScreen.classList.remove('hidden', 'leaving');
       this.dom.startScreen.classList.add('open');
@@ -1384,6 +1682,18 @@
       this.bossPerception = 10 + this.profile.boss.sensitivity;
       this.slowFields = [];
       this.traps = [];
+      this.wallBreaks = [];
+      this.blockCharges = BLOCK_MAX_CHARGES;
+      this.blockRecharge = 0;
+      this.blocking = false;
+      this.blockElapsed = 0;
+      this.blockTriggered = false;
+      this.skillAnimTimer = 0;
+      this.skillAnimTotal = 0;
+      this.parryFreeze = 0;
+      this.parryPending = null;
+      this.parryFlash = 0;
+      this.renderer.cinematicZoom = 1;
       this.backpackOpen = false;
       this.dom.backpackPanel.classList.remove('open');
       this.dom.backpackPanel.setAttribute('aria-hidden', 'true');
@@ -1440,6 +1750,8 @@
         speed: 0
       };
       this.renderer.setMaze(maze);
+      this.renderer.setCharacter(this.profile.character);
+      this.dom.skillHud.hidden = this.profile.character !== 'grok';
       this.renderer.camYaw = 0;
       this.renderer.lastWalkDistance = 0;
       this.renderer.time = 0;
@@ -1484,6 +1796,7 @@
       this.renderer.render(this, 0);
       this.revealAroundPlayer(true);
       if (this.mode === 'chase' || this.mode === 'test') this.spawnBoss();
+      this.updateSkillHUD();
     }
 
     revealAroundPlayer(initial = false) {
@@ -2044,6 +2357,17 @@
       }
 
       if (this.mode !== 'test' && this.bossCollidesPlayer()) {
+        if (this.blocking) {
+          if (!this.blockTriggered) {
+            this.blockTriggered = true;
+            if (this.blockElapsed <= PARRY_WINDOW) {
+              this.startParry();
+            } else {
+              this.applyBlockKnockback(false);
+            }
+          }
+          return;
+        }
         if (this.hasWhaleCard()) {
           this.triggerWhalePrompt();
         } else {
@@ -2171,6 +2495,7 @@
       this.sprinting = false;
       this.dom.bossAlert.hidden = true;
       this.dom.bossArrow.hidden = true;
+      this.dom.skillHud.hidden = true;
       this.dom.whalePrompt.classList.remove('open');
       this.dom.whalePrompt.setAttribute('aria-hidden', 'true');
       this.dom.defeatTime.textContent = formatTime(this.elapsed);
@@ -2266,13 +2591,23 @@
         for (const field of this.slowFields) field.time -= dt;
         this.slowFields = this.slowFields.filter((field) => field.time > 0);
       }
+      this.updateWallBreaks(dt);
     }
 
     update(dt) {
       if (this.mapOpen) return;
+      if (this.parryFreeze > 0) {
+        this.parryFreeze = Math.max(0, this.parryFreeze - dt);
+        this.parryFlash = this.parryFreeze > 0 ? this.parryFreeze / 0.55 : 0;
+        this.renderer.cinematicZoom = 1 + 0.75 * (this.parryFreeze / 0.55);
+        if (this.parryFreeze <= 0) this.finishParry();
+        this.updateSkillHUD();
+        return;
+      }
       const p = this.player;
       this.elapsed += dt;
       this.updateTimedEffects(dt);
+      this.updateSkillState(dt);
       if (this.noDrainTimer > 0) this.noDrainTimer = Math.max(0, this.noDrainTimer - dt);
       if (this.speedPotionTimer > 0) {
         this.speedPotionTimer = Math.max(0, this.speedPotionTimer - dt);
@@ -2294,6 +2629,11 @@
 
       let inputX = (right ? 1 : 0) - (left ? 1 : 0);
       let inputZ = (back ? 1 : 0) - (forward ? 1 : 0);
+      if (this.blocking) {
+        inputX = 0;
+        inputZ = 0;
+        p.moving = false;
+      }
       const inputLength = Math.hypot(inputX, inputZ);
       if (inputLength > 0) {
         inputX /= inputLength;
@@ -2344,6 +2684,12 @@
           p.facingMirror = direction.mirror;
           if (direction.key !== 'front' && direction.key !== 'back' &&
               !ART_FACING[direction.key]) {
+            p.facingMirror = !p.facingMirror;
+          }
+          // Grok's diagonal source art is left-facing (aw/as), opposite to
+          // the lamp character's diagonal sheets.
+          if (this.profile.character === 'grok' &&
+              (direction.key === 'diagFront' || direction.key === 'diagBack')) {
             p.facingMirror = !p.facingMirror;
           }
           p.yaw = Math.atan2(actualDx, -actualDz);
@@ -2573,6 +2919,8 @@
       if (this.boss) this.boss.active = false;
       this.dom.bossAlert.hidden = true;
       this.dom.bossArrow.hidden = true;
+      this.dom.skillHud.hidden = true;
+      this.renderer.cinematicZoom = 1;
       this.dom.victoryTime.textContent = formatTime(this.elapsed);
       this.dom.victoryPct.textContent = Math.round(this.exploredPct) + '%';
       this.dom.victorySeed.textContent = String(this.seed);

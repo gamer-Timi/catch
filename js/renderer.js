@@ -45,6 +45,10 @@ const CULL_MARGIN = 96;
       this.dashCellH = 352;
       this.directionSprites = Object.create(null);
       this.directionSheets = Object.create(null);
+      this.grokSheets = Object.create(null);
+      this.skillSheet = null;
+      this.character = 'lamp';
+      this.cinematicZoom = 1;
       this.bossSprites = Object.create(null);
       this.focusBoss = false;
       this.overlayCanvas = null;
@@ -110,6 +114,34 @@ const CULL_MARGIN = 96;
         frameH: height,
         frames
       };
+    }
+
+    setGrokSheet(key, image, frames = 4) {
+      const width = image && (image.naturalWidth || image.width);
+      const height = image && (image.naturalHeight || image.height);
+      if (!width || !height || frames < 1) return;
+      this.grokSheets[key] = {
+        image,
+        frameW: width / frames,
+        frameH: height,
+        frames
+      };
+    }
+
+    setSkillSheet(image, frames = 5) {
+      const width = image && (image.naturalWidth || image.width);
+      const height = image && (image.naturalHeight || image.height);
+      if (!width || !height || frames < 1) return;
+      this.skillSheet = {
+        image,
+        frameW: width / frames,
+        frameH: height,
+        frames
+      };
+    }
+
+    setCharacter(name) {
+      this.character = name === 'grok' ? 'grok' : 'lamp';
     }
 
     setBossSprite(key, image) {
@@ -185,7 +217,7 @@ const CULL_MARGIN = 96;
     }
 
     projectCam(c) {
-      const scale = this.focal / c.z;
+      const scale = (this.focal * (this.cinematicZoom || 1)) / c.z;
       return {
         x: this.W * 0.5 + c.x * scale,
         y: this.H * 0.5 - c.y * scale
@@ -439,6 +471,74 @@ const CULL_MARGIN = 96;
         ctx.stroke();
         ctx.restore();
       }
+    }
+
+    drawWallBreaks(game) {
+      if (!game.wallBreaks || !game.wallBreaks.length) return;
+      const ctx = this.ctx;
+      for (const w of game.wallBreaks) {
+        if (w.age >= 10.5) continue;
+        const center = this.maze.tileCenter(w.tx, w.ty);
+        const pt = this.project({ x: center.x, y: WALL_TOP * 0.7, z: center.z });
+        if (!pt) continue;
+        let alpha;
+        let radius;
+        if (w.age < 0.5) {
+          alpha = 1 - w.age / 0.5;
+          radius = 10 + w.age * 120;
+        } else if (w.age < 5.5) {
+          alpha = 0.72;
+          radius = 22;
+        } else {
+          alpha = Math.max(0, (10.5 - w.age) / 5);
+          radius = 22;
+        }
+        if (alpha <= 0.01) continue;
+        ctx.save();
+        ctx.translate(pt.x, pt.y);
+        ctx.globalCompositeOperation = 'lighter';
+        const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, radius * 1.8);
+        glow.addColorStop(0, 'rgba(255,226,150,' + (0.6 * alpha) + ')');
+        glow.addColorStop(0.4, 'rgba(255,142,64,' + (0.24 * alpha) + ')');
+        glow.addColorStop(1, 'rgba(120,45,10,0)');
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(0, 0, radius * 1.8, 0, TAU);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,213,144,' + (0.75 * alpha) + ')';
+        ctx.lineWidth = 1.3;
+        for (let i = 0; i < 7; i++) {
+          const a = i * 2.399 + w.tx * 0.7;
+          const inner = radius * (0.25 + (i % 3) * 0.12);
+          const outer = radius * (0.8 + (i % 4) * 0.18);
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(a) * inner, Math.sin(a) * inner);
+          ctx.lineTo(Math.cos(a + 0.14) * outer, Math.sin(a + 0.14) * outer);
+          ctx.lineTo(Math.cos(a - 0.08) * outer * 0.82, Math.sin(a - 0.08) * outer * 0.82);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+
+    drawParryFlash(game) {
+      if (!(game.parryFreeze > 0)) return;
+      const ctx = this.ctx;
+      const a = Math.min(1, game.parryFreeze / 0.55);
+      ctx.save();
+      ctx.globalCompositeOperation = 'screen';
+      const g = ctx.createRadialGradient(this.W * 0.5, this.H * 0.46, 0, this.W * 0.5, this.H * 0.46, Math.max(this.W, this.H) * 0.58);
+      g.addColorStop(0, 'rgba(255,241,190,' + (0.3 * a) + ')');
+      g.addColorStop(0.28, 'rgba(255,205,105,' + (0.16 * a) + ')');
+      g.addColorStop(1, 'rgba(255,180,60,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, this.W, this.H);
+      ctx.strokeStyle = 'rgba(255,239,175,' + (0.6 * a) + ')';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(this.W * 0.5, this.H * 0.52, Math.min(this.W, this.H) * (0.18 + (1 - a) * 0.18), 0, TAU);
+      ctx.stroke();
+      ctx.restore();
     }
 
     drawColliderRing(entity, isBoss) {
@@ -922,6 +1022,53 @@ const CULL_MARGIN = 96;
       }
     }
 
+    drawSkillPlayer(game, foot, topPos, spriteH) {
+      const sheet = this.skillSheet;
+      if (!sheet) return false;
+      const ctx = this.ctx;
+      let frame = 0;
+      if (game.skillAnimTimer > 0 && game.skillAnimTotal > 0) {
+        const progress = 1 - game.skillAnimTimer / game.skillAnimTotal;
+        frame = 1 + Math.min(3, Math.floor(progress * 4));
+      }
+      const drawW = spriteH * (sheet.frameW / sheet.frameH);
+      const sx = frame * sheet.frameW;
+      const shadow = this.project({ x: game.player.x, y: 0.025, z: game.player.z });
+      if (shadow) {
+        const g = ctx.createRadialGradient(shadow.x, shadow.y, 0, shadow.x, shadow.y, drawW * 0.6);
+        g.addColorStop(0, 'rgba(0,0,0,0.46)');
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.save();
+        ctx.translate(shadow.x, shadow.y);
+        ctx.scale(1, 0.34);
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(0, 0, drawW * 0.6, 0, TAU);
+        ctx.fill();
+        ctx.restore();
+      }
+      const haloY = topPos.y + spriteH * 0.58;
+      const halo = ctx.createRadialGradient(foot.x, haloY, 0, foot.x, haloY, drawW * 1.15);
+      halo.addColorStop(0, game.parryFreeze > 0 ? 'rgba(255,226,142,0.32)' : 'rgba(240,201,137,0.16)');
+      halo.addColorStop(1, 'rgba(50,100,170,0)');
+      ctx.save();
+      ctx.globalCompositeOperation = 'screen';
+      ctx.fillStyle = halo;
+      ctx.beginPath();
+      ctx.arc(foot.x, haloY, drawW * 1.15, 0, TAU);
+      ctx.fill();
+      ctx.restore();
+      ctx.save();
+      ctx.translate(foot.x, foot.y);
+      const bob = game.blocking ? Math.sin(this.time * 4) * 0.008 : 0;
+      ctx.translate(0, bob);
+      ctx.shadowColor = game.parryFreeze > 0 ? 'rgba(255,224,150,0.9)' : 'rgba(240,201,137,0.65)';
+      ctx.shadowBlur = game.parryFreeze > 0 ? 34 : 20;
+      ctx.drawImage(sheet.image, sx, 0, sheet.frameW, sheet.frameH, -drawW * 0.5, -spriteH, drawW, spriteH);
+      ctx.restore();
+      return true;
+    }
+
     drawPlayer(game) {
       const ctx = this.ctx;
       const p = game.player;
@@ -935,9 +1082,19 @@ const CULL_MARGIN = 96;
       const topPos = this.project({ x: p.x, y: 0.02 + this.playerWorldHeight + bob, z: p.z });
       if (!topPos) return;
       const spriteH = Math.max(10, foot.y - topPos.y);
+      if ((game.profile.character || 'lamp') === 'grok' &&
+          (game.blocking || game.skillAnimTimer > 0) &&
+          this.drawSkillPlayer(game, foot, topPos, spriteH)) {
+        return;
+      }
       const dashActive = !!(p.moving && p.sprinting);
-      const directionWalk = this.directionSheets[p.facingDir];
-      const directionSheet = this.directionSprites[p.facingDir];
+      const characterSheets = (game.profile.character || 'lamp') === 'grok'
+        ? this.grokSheets
+        : this.directionSheets;
+      const directionWalk = characterSheets[p.facingDir];
+      const directionSheet = (game.profile.character || 'lamp') === 'lamp'
+        ? this.directionSprites[p.facingDir]
+        : null;
       let sheet = null;
       let sx = 0, sy = 0, sw = 0, sh = 0;
       let drawW = spriteH * 0.42;
@@ -1175,6 +1332,8 @@ const CULL_MARGIN = 96;
         }
       }
       this.drawLightOverlay(game);
+      this.drawWallBreaks(game);
+      this.drawParryFlash(game);
     }
   }
 

@@ -14,6 +14,7 @@
 | --- | --- | --- |
 | 上下左右移动 | `WASD`、方向键 | 左下方向盘 |
 | 冲刺 | 按住 `Shift` | 「疾跑」按钮 |
+| 格挡（格挡者） | `Q` | 目标卡中的格挡层数 |
 | 暂停 / 继续 | `Space` | 暂停菜单 |
 | 展开 / 收起地图 | `M` | 右侧「地图」按钮 |
 | 测试模式切换视角 | `V` | 测试模式下的「主角 / BOSS」按钮 |
@@ -23,6 +24,17 @@
 | 新迷宫 | 胜利后 `Space` / `Enter` | 「再入迷宫」 |
 
 地图展开期间游戏暂停，计时、道具持续时间和体力都会停住。`Space` 打开暂停菜单，可以从暂停菜单退回主页。
+
+## 角色
+
+主页右侧可以切换角色，使用方盒翻转动画循环切换；点击「技能介绍」展开当前角色的技能说明。
+
+- **提灯者**：初始角色，没有主动技能。
+- **格挡者 Grok**：按下 `Q` 进入 1 秒格挡，期间无法移动。
+  - 格挡每 `100s` 储存一层，最多两层，开局有两层。
+  - 格挡期间被 BOSS 追上：把 BOSS 朝远离自身的方向击退 `100m`，眩晕 `0.5s`；撞墙则停止后退，眩晕变为 `2.5s`，并触发碎墙特效。
+  - 按下 `Q` 后的 `0.1s` 内被追上：触发完美防反，短暂定格放大并闪烁金光，击退 `200m`，眩晕 `7.5s`，本次充能时间减少 `20%`。
+  - 碎墙特效持续约 `0.5s`，之后墙面裂开约 `5s`，再用 `5s` 恢复原状。
 
 ## 体力与速度
 
@@ -196,12 +208,20 @@ game/
   assets/player-diag-front-walk.png 斜前方向 4 帧行走（用户素材）
   assets/player-diag-back-walk.png  斜后方向 6 帧行走（用户素材）
   assets/player-portrait.png 封面角色图（已换为新方向素材里的正面角色）
+  assets/grok-up-walk.png    格挡者朝上 7 帧
+  assets/grok-down-walk.png  格挡者朝下 10 帧
+  assets/grok-side-walk.png  格挡者朝右 4 帧
+  assets/grok-diag-front-walk.png 格挡者朝左下 5 帧
+  assets/grok-diag-back-walk.png  格挡者朝左上 4 帧
+  assets/grok-skill.png      格挡 ready + 动作 1–4
+  assets/grok-portrait.png   格挡者封面
   assets/boss-up.png         BOSS 朝上
   assets/boss-down.png       BOSS 朝下
   assets/boss-left.png       BOSS 朝左
   assets/boss-upleft.png     BOSS 朝左上
   assets/boss-downleft.png   BOSS 朝左下
   BOSS1/                     BOSS 原始方向图
+  grok/                      格挡者原始动作与 skill 图
   move/                      用户提供的五张方向动作原图
   character.png              原始角色动作图
 ```
