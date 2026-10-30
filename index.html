@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#050b14">
+  <title>幽蓝迷宫 · Azure Labyrinth</title>
+  <meta name="description" content="在随机生成的幽蓝迷宫中，凭一盏微光摸索出口。">
+  <link rel="stylesheet" href="style.css?v=54">
+</head>
+<body data-state="title">
+  <div id="app">
+    <canvas id="scene" aria-label="迷宫场景"></canvas>
+    <div class="scene-vignette" aria-hidden="true"></div>
+    <div class="film-grain" aria-hidden="true"></div>
+
+    <div id="loading" class="loading visible">正在点亮灯火…</div>
+
+    <!-- ===================== HUD ===================== -->
+    <main id="hud" class="hud" aria-label="游戏界面">
+      <header class="brand">
+        <span class="brand-sigil" aria-hidden="true">
+          <svg viewBox="0 0 48 48" fill="none">
+            <circle cx="24" cy="24" r="17.5" stroke="currentColor" stroke-width="1"/>
+            <path d="M24 6.5c3.6 4.3 5.4 9.1 5.4 14.2 0 5.4-1.9 10.2-5.4 14.1-3.5-3.9-5.4-8.7-5.4-14.1 0-5.1 1.8-9.9 5.4-14.2Z" stroke="currentColor" stroke-width="1"/>
+            <path d="M11 33.5c5.3-1.1 9.9-.8 14.4.9 4.3 1.6 7.9 4.4 10.8 8.1" stroke="currentColor" stroke-width="1" opacity=".55"/>
+          </svg>
+        </span>
+        <div class="brand-copy">
+          <h1>幽蓝迷宫</h1>
+          <p>AZURE LABYRINTH</p>
+        </div>
+      </header>
+
+      <div class="hud-meta">
+        <div class="meta-item">
+          <span class="meta-label">TIME</span>
+          <span id="timer" class="meta-value">00:00</span>
+        </div>
+        <span class="meta-rule" aria-hidden="true"></span>
+        <div class="meta-item">
+          <span class="meta-label">EXPLORED</span>
+          <span id="explore-pct" class="meta-value">0%</span>
+        </div>
+        <button id="audio-btn" class="icon-btn" type="button" aria-label="静音" title="静音">
+          <svg class="icon-on" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4 9h3.2L12 5.2v13.6L7.2 15H4V9Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+            <path d="M15.2 9.2a4 4 0 0 1 0 5.6M17.9 6.6a7.6 7.6 0 0 1 0 10.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          </svg>
+          <svg class="icon-off" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4 9h3.2L12 5.2v13.6L7.2 15H4V9Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+            <path d="m16 10 5 5m0-5-5 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+
+      <aside class="objective-card">
+        <span class="eyebrow"><i></i>当前目标</span>
+        <span id="mode-tag" class="mode-tag">探索模式</span>
+        <p id="objective-text">在迷宫中寻找月之门</p>
+        <span id="compass-readout" class="compass-readout" hidden></span>
+        <div id="stamina-card" class="stamina-card" role="progressbar" aria-label="体力" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
+          <div class="stamina-head">
+            <span class="stamina-title"><i></i>体力 / STAMINA</span>
+            <b id="stamina-value">100</b>
+          </div>
+          <div class="stamina-track">
+            <i id="stamina-fill" class="stamina-fill"></i>
+            <span class="stamina-ticks" aria-hidden="true"></span>
+          </div>
+          <span id="stamina-state" class="stamina-state">冲刺就绪</span>
+        </div>
+        <div id="buff-row" class="buff-row" aria-live="polite"></div>
+        <div id="test-view" class="test-view" hidden>
+          <span>观测视角</span>
+          <button id="view-player" type="button" class="active">主角</button>
+          <button id="view-boss" type="button">BOSS</button>
+          <kbd>V</kbd>
+        </div>
+      </aside>
+
+      <div id="hotbar" class="hotbar" aria-label="消耗品快捷栏"></div>
+
+      <div class="controls-hint">
+        <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移动</span>
+        <span class="hint-sep"></span>
+        <span><kbd>SHIFT</kbd> 冲刺</span>
+        <span class="hint-sep"></span>
+        <span><kbd>M</kbd> 地图</span>
+        <span class="hint-sep"></span>
+        <span><kbd>SPACE</kbd> 暂停</span>
+      </div>
+
+      <button id="map-btn" class="map-btn" type="button" aria-label="展开迷宫地图" data-found="0" data-hint="true">
+        <span class="map-btn-ring" aria-hidden="true"></span>
+        <span class="map-btn-icon" aria-hidden="true">
+          <svg viewBox="0 0 32 32" fill="none">
+            <path d="M7 9.2 13 7l6 2.2L25 7v16l-6 2.2L13 23l-6 2.2V9.2Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+            <path d="M13 7v16M19 9.2v16" stroke="currentColor" stroke-width="1.1" opacity=".65"/>
+            <circle cx="16" cy="15.5" r="1.7" fill="currentColor"/>
+          </svg>
+        </span>
+        <span class="map-btn-label">地图</span>
+        <span class="map-btn-key">M</span>
+      </button>
+
+      <div id="toast" class="toast" role="status" aria-live="polite" data-type="info">
+        <span class="toast-glyph"></span><span></span>
+      </div>
+
+      <div id="boss-alert" class="boss-alert" role="status" aria-live="assertive" hidden>你已被小难梁察觉</div>
+      <div id="boss-arrow" class="boss-arrow" aria-hidden="true" hidden>
+        <span class="boss-arrow-ring"></span>
+        <span class="boss-arrow-needle"></span>
+        <b>小难梁</b>
+      </div>
+
+      <div id="seed-tag" class="seed-tag">SEED ——</div>
+
+      <div class="touch-controls">
+        <div class="touch-pad">
+          <button id="touch-left" class="touch-key turn" type="button" aria-label="向左移动">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M20 12H4M9 7l-5 5 5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div class="touch-stack">
+            <button id="touch-forward" class="touch-key" type="button" aria-label="向上移动">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M12 20V4M7 9l5-5 5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button id="touch-back" class="touch-key" type="button" aria-label="向下移动">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M12 4v16M7 15l5 5 5-5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+          <button id="touch-right" class="touch-key turn" type="button" aria-label="向右移动">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M4 12h16M15 7l5 5-5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <div class="touch-actions">
+          <button id="touch-sprint" class="touch-sprint" type="button" aria-label="按住冲刺">疾跑</button>
+          <button id="touch-map" class="touch-map" type="button" aria-label="展开地图">
+            <svg viewBox="0 0 32 32" fill="none">
+              <path d="M7 9.2 13 7l6 2.2L25 7v16l-6 2.2L13 23l-6 2.2V9.2Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+              <path d="M13 7v16M19 9.2v16" stroke="currentColor" stroke-width="1.1" opacity=".65"/>
+            </svg>
+            <span>地图</span>
+          </button>
+        </div>
+      </div>
+    </main>
+
+    <!-- ===================== START ===================== -->
+    <section id="start-screen" class="screen start-screen open" aria-label="开始界面">
+      <div class="start-atmosphere" aria-hidden="true">
+        <div class="aurora aurora-a"></div>
+        <div class="aurora aurora-b"></div>
+        <div class="moon-disc"></div>
+        <div class="start-grid"></div>
+      </div>
+
+      <div class="start-frame">
+        <div class="start-topbar">
+          <span class="kicker"><i></i> PROCEDURAL LABYRINTH</span>
+          <span class="start-top-meta">NO. <b>01</b> / THE MOON GATE</span>
+        </div>
+
+        <div class="start-main">
+          <div class="hero-copy">
+            <p class="hero-eyebrow">在光与暗的边界，寻找月之门</p>
+            <h1 class="hero-title">
+              <span>幽蓝</span>
+              <span class="title-second">迷宫<em>。</em></span>
+            </h1>
+            <p class="hero-en">AZURE<br>LABYRINTH</p>
+            <p class="hero-lead">每一次踏入，墙垣都会重新生长。<br>你只有一盏灯，和一张尚未成形的地图。</p>
+
+            <div class="start-actions">
+              <button id="start-btn" class="primary-btn" type="button">
+                <span class="btn-glyph" aria-hidden="true"></span>
+                <span>踏入迷宫</span>
+                <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 10h13M11 5l5 5-5 5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+              <button id="home-menu-btn" class="secondary-btn prepare-btn" type="button">
+                <span>整备 / 成长</span>
+              </button>
+              <span class="start-key-hint"><kbd>ENTER</kbd> 或点击开始</span>
+            </div>
+
+            <ul class="feature-row">
+              <li><b>01</b><span>纯随机迷宫<br>每次都是新的路</span></li>
+              <li><b>02</b><span>光所照过<br>才会留在地图上</span></li>
+              <li><b>03</b><span>展开地图时<br>时间为你停驻</span></li>
+            </ul>
+          </div>
+
+          <div class="portrait-stage" aria-hidden="true">
+            <div class="portrait-halo"></div>
+            <div class="orbit orbit-a"></div>
+            <div class="orbit orbit-b"></div>
+            <div class="orbit orbit-c"></div>
+            <span class="orbit-rune rune-a">✧</span>
+            <span class="orbit-rune rune-b">◐</span>
+            <span class="orbit-rune rune-c">✦</span>
+            <img src="assets/player-portrait.png?v=2" alt="" class="portrait-img">
+            <div class="portrait-caption">
+              <span>THE WANDERER</span>
+              <b>提灯者</b>
+            </div>
+            <span class="portrait-tick tick-a"></span>
+            <span class="portrait-tick tick-b"></span>
+          </div>
+        </div>
+
+        <div class="start-footer">
+          <span class="start-footer-copy">“地图不会告诉你路。它只会记住你走过的黑暗。”</span>
+          <span class="start-footer-right">
+            <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移动
+            <i></i>
+            <kbd>SHIFT</kbd> 冲刺
+            <i></i>
+            <kbd>M</kbd> 地图
+            <i></i>
+            <kbd>SPACE</kbd> 暂停
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== HOME / PREPARATION ===================== -->
+    <section id="home-panel" class="home-panel" aria-hidden="true" aria-label="提灯者整备">
+      <div class="home-shell">
+        <header class="home-header">
+          <div>
+            <span class="kicker"><i></i> PREPARATION / 00</span>
+            <h2>提灯者整备</h2>
+            <p>测试模式：加点和道具全部免费，可直接增加或减少。</p>
+            <div id="mode-switch" class="mode-switch" aria-label="游戏模式">
+              <button type="button" data-mode="explore">探索模式</button>
+              <button type="button" data-mode="chase">追逐模式</button>
+              <button type="button" data-mode="test">测试模式</button>
+            </div>
+          </div>
+          <button id="home-close" class="map-x" type="button" aria-label="关闭整备界面">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+          </button>
+        </header>
+
+        <div class="home-columns">
+          <section class="home-section">
+            <div class="section-head">
+              <div><span class="kicker"><i></i> ATTRIBUTES</span><h3>加点</h3></div>
+              <span class="free-tag">FREE</span>
+            </div>
+            <div id="upgrade-list" class="upgrade-list"></div>
+            <p class="home-note">所有加点本身不消耗点数；后续可以接入真正的成长资源。</p>
+          </section>
+
+          <section class="home-section">
+            <div class="section-head">
+              <div><span class="kicker"><i></i> EQUIPMENT</span><h3>装备栏</h3></div>
+            </div>
+            <div id="home-equipment" class="home-equipment"></div>
+
+            <div class="section-head shop-head">
+              <div><span class="kicker"><i></i> CHASE SETTINGS</span><h3>追逐模式</h3></div>
+              <span class="free-tag">BOSS</span>
+            </div>
+            <div id="boss-settings" class="boss-settings"></div>
+
+            <div class="section-head shop-head">
+              <div><span class="kicker"><i></i> CONSUMABLES</span><h3>消耗品</h3></div>
+              <button id="open-backpack" class="mini-btn" type="button">打开背包</button>
+            </div>
+            <div id="home-consumables" class="home-consumables"></div>
+
+            <div class="section-head">
+              <div><span class="kicker"><i></i> QUICK BAR</span><h3>快捷栏</h3></div>
+              <span class="free-tag">游戏中按数字键</span>
+            </div>
+            <div id="home-slots" class="home-slots"></div>
+          </section>
+        </div>
+
+        <footer class="home-footer">
+          <span>装备和消耗品会在下一次进入迷宫时生效。</span>
+          <button id="home-close-bottom" class="secondary-btn" type="button">返回封面</button>
+        </footer>
+      </div>
+    </section>
+
+    <!-- ===================== BACKPACK ===================== -->
+    <section id="backpack-panel" class="backpack-panel" aria-hidden="true" aria-label="背包">
+      <div class="backpack-shell">
+        <header class="backpack-header">
+          <div>
+            <span class="kicker"><i></i> PACK / 09 SLOTS</span>
+            <h2>背包</h2>
+            <p>把消耗品拖到右侧 1–9 格中携带。每种道具最多占一格，数量不限制。</p>
+          </div>
+          <button id="backpack-close" class="map-x" type="button" aria-label="关闭背包">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+          </button>
+        </header>
+        <div class="backpack-body">
+          <section class="backpack-storage">
+            <div class="section-head"><h3>消耗品仓库</h3><span class="free-tag">FREE</span></div>
+            <div id="backpack-items" class="backpack-items"></div>
+          </section>
+          <section class="backpack-carry">
+            <div class="section-head"><h3>携带</h3><span class="free-tag">1–9</span></div>
+            <div id="backpack-slots" class="backpack-slots"></div>
+            <p class="backpack-note">拖动道具到数字格；拖动格子可以交换位置。</p>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== WHALE CARD PROMPT ===================== -->
+    <section id="whale-prompt" class="whale-prompt" aria-hidden="true" aria-label="免死鲸牌">
+      <div class="whale-panel">
+        <span class="kicker"><i></i> SECOND CHANCE</span>
+        <h2>你被小难梁抓住了</h2>
+        <p>是否消耗一张「免死鲸牌」？<br>使用后立刻复活，并将小难梁禁锢 10 秒。</p>
+        <div class="whale-actions">
+          <button id="whale-use" class="primary-btn" type="button">使用免死鲸牌</button>
+          <button id="whale-decline" class="secondary-btn" type="button">放弃</button>
+        </div>
+        <small id="whale-count">剩余 0 张</small>
+      </div>
+    </section>
+
+    <!-- ===================== PAUSE ===================== -->
+    <section id="pause-screen" class="screen pause-screen" aria-hidden="true" aria-label="游戏暂停">
+      <div class="pause-panel">
+        <span class="kicker"><i></i> TIME SUSPENDED</span>
+        <h2>时间停驻。</h2>
+        <p>迷宫暂时停止呼吸，灯火也静止了。</p>
+        <div class="pause-actions">
+          <button id="pause-resume" class="primary-btn" type="button">继续探索</button>
+          <button id="pause-home" class="secondary-btn" type="button">退回主页</button>
+        </div>
+        <p class="pause-hint"><kbd>SPACE</kbd> 继续 · 退回主页会放弃本局迷宫</p>
+      </div>
+    </section>
+
+    <!-- ===================== MAP ===================== -->
+    <section id="map-screen" class="screen map-screen" aria-hidden="true" aria-label="迷宫地图">
+      <div class="map-vignette" aria-hidden="true"></div>
+      <div class="map-frame">
+        <header class="map-header">
+          <div>
+            <span class="kicker"><i></i> CARTOGRAPHY / 01</span>
+            <h2>迷宫地图</h2>
+            <p>灯光照过的格子，才会留在地图上。</p>
+          </div>
+          <div class="map-header-right">
+            <div class="map-header-mark" aria-hidden="true">
+              <span>TOP VIEW</span>
+              <b>俯视记录</b>
+            </div>
+            <button id="map-close-x" class="map-x" type="button" aria-label="关闭地图" title="关闭地图">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+              </svg>
+            </button>
+          </div>
+        </header>
+
+        <div class="map-layout">
+          <div class="map-shell">
+            <div class="map-shell-corner c1"></div>
+            <div class="map-shell-corner c2"></div>
+            <div class="map-shell-corner c3"></div>
+            <div class="map-shell-corner c4"></div>
+            <canvas id="map-canvas" aria-label="俯视迷宫地图"></canvas>
+            <div class="map-shell-meta">
+              <span>LIVE CARTOGRAPHY · 拖动查看</span>
+              <span id="map-seed">SEED ——</span>
+            </div>
+          </div>
+
+          <aside class="map-info">
+            <div class="map-zoom" aria-label="地图缩放">
+              <span class="map-zoom-caption">地图缩放</span>
+              <div class="map-zoom-buttons">
+                <button id="map-zoom-out" type="button" aria-label="缩小地图">−</button>
+                <span id="map-zoom-label">×1</span>
+                <button id="map-zoom-in" type="button" aria-label="放大地图">+</button>
+              </div>
+            </div>
+            <div class="map-stat">
+              <span class="meta-label">EXPLORED</span>
+              <strong id="map-progress">0%</strong>
+              <div class="map-stat-line"><i></i></div>
+            </div>
+            <div class="map-status">
+              <span class="meta-label">出口状态</span>
+              <strong id="map-found">尚未发现</strong>
+            </div>
+            <div class="map-status">
+              <span class="meta-label">感知力</span>
+              <strong id="map-perception">5 格</strong>
+            </div>
+            <div class="map-status">
+              <span class="meta-label">警觉度</span>
+              <strong id="map-alertness">—</strong>
+            </div>
+            <div class="map-status">
+              <span class="meta-label">追猎</span>
+              <strong id="map-boss">无</strong>
+            </div>
+
+            <div class="map-legend">
+              <span class="eyebrow"><i></i>图例</span>
+              <ul>
+                <li><span class="legend-dot player"></span>你的位置 / 朝向</li>
+                <li><span class="legend-dot exit"></span>月之门 <small>发现后显示</small></li>
+                <li><span class="legend-line"></span>已探索的墙垣与通路</li>
+                <li><span class="legend-diamond gold"></span>感知范围 <small>月之门位置</small></li>
+                <li><span class="legend-diamond red"></span>警觉范围 <small>BOSS 方位</small></li>
+                <li><span class="legend-shade"></span>尚未被光照亮的区域</li>
+              </ul>
+            </div>
+
+            <p class="map-note">地图展开时，迷宫会暂时停止呼吸。<br>滚轮或 + / − 缩放，拖动查看细节。</p>
+
+            <div class="map-actions">
+              <button id="map-close" class="secondary-btn" type="button">
+                <span>返回迷宫</span>
+                <kbd>M</kbd>
+              </button>
+              <p>移动暂停中 · 时间已停驻</p>
+            </div>
+          </aside>
+        </div>
+
+        <footer class="map-footer">
+          <span>探索度会在每次点灯时更新</span>
+          <span class="map-footer-center">— 光到达之处，路才开始存在 —</span>
+          <span><kbd>M</kbd> / <kbd>ESC</kbd> 关闭</span>
+        </footer>
+      </div>
+    </section>
+
+    <!-- ===================== VICTORY ===================== -->
+    <section id="victory-screen" class="screen victory-screen" aria-hidden="true" aria-label="抵达出口">
+      <div class="victory-atmosphere" aria-hidden="true">
+        <div class="victory-moon"></div>
+        <div class="victory-ring r1"></div>
+        <div class="victory-ring r2"></div>
+        <div class="victory-ring r3"></div>
+      </div>
+      <div class="victory-panel">
+        <span class="kicker"><i></i> THE MOON GATE HAS OPENED</span>
+        <p class="victory-over">月之门 · 已抵达</p>
+        <h2>你走出了<br><em>这座会呼吸的迷宫。</em></h2>
+        <p class="victory-copy">身后的路重新沉入黑暗，<br>但地图记得每一盏灯亮起的地方。</p>
+
+        <div class="victory-stats">
+          <div><span>用时</span><strong id="victory-time">00:00</strong></div>
+          <div><span>探索度</span><strong id="victory-pct">0%</strong></div>
+          <div><span>迷宫种子</span><strong id="victory-seed" class="seed-value">0</strong></div>
+        </div>
+
+        <button id="again-btn" class="primary-btn" type="button">
+          <span class="btn-glyph" aria-hidden="true"></span>
+          <span>再入迷宫</span>
+          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 10h13M11 5l5 5-5 5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <p class="victory-hint"><kbd>SPACE</kbd> 生成新的迷宫</p>
+      </div>
+      <div class="victory-side" aria-hidden="true">
+        <span>THE END</span>
+        <span>OF THIS<br>LABYRINTH</span>
+      </div>
+    </section>
+
+    <!-- ===================== DEFEAT ===================== -->
+    <section id="defeat-screen" class="screen defeat-screen" aria-hidden="true" aria-label="小难梁得到了大赢鲸">
+      <div class="defeat-panel">
+        <span class="kicker"><i></i> THE HUNT CAUGHT YOU</span>
+        <p class="victory-over">追猎失败</p>
+        <h2>小难梁得到了<br><em>大赢鲸</em></h2>
+        <p class="victory-copy">灯火熄灭之前，它已经贴到了你的身后。</p>
+        <div class="victory-stats">
+          <div><span>坚持时间</span><strong id="defeat-time">00:00</strong></div>
+          <div><span>探索度</span><strong id="defeat-pct">0%</strong></div>
+          <div><span>迷宫种子</span><strong id="defeat-seed" class="seed-value">0</strong></div>
+        </div>
+        <div class="defeat-actions">
+          <button id="defeat-retry" class="primary-btn" type="button">再试一次</button>
+          <button id="defeat-home" class="secondary-btn" type="button">返回主页</button>
+        </div>
+        <p class="victory-hint"><kbd>ENTER</kbd> 再试一次 · <kbd>ESC</kbd> 返回主页</p>
+      </div>
+    </section>
+  </div>
+
+  <script src="js/maze.js?v=54"></script>
+  <script src="js/audio.js?v=54"></script>
+  <script src="js/renderer.js?v=54"></script>
+  <script src="js/game.js?v=54"></script>
+</body>
+</html>
